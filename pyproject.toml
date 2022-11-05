@@ -25,6 +25,9 @@ dependencies = [
   "tqdm==4.64.1",
 ]
 
+[project.optional-dependencies]
+tests = ["pandas==1.5.1", "pytest==7.2.0"]
+
 [project.urls]
 "Homepage" = "https://github.com/Elliot-D-Hill/protein-tools"
 "Bug Tracker" = "https://github.com/Elliot-D-Hill/protein-tools/issues"
