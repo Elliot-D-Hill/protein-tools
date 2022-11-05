@@ -4,29 +4,25 @@ from Bio import Entrez
 import json
 from pathlib import Path
 
-from utils import separate_header
+
+def separate_header(sequence: str) -> tuple[str]:
+    """Returns a tuble containing the sequence header and the sequence itself"""
+    return sequence[0], "".join(sequence[1:])
 
 
-# returns a list of tuples containing a header and sequence for each sequence in a FASTA file
-def process_fasta(file_text):
+def process_fasta(file_text: str) -> tuple[str]:
+    """Returns a list of tuples containing a header and sequence for each sequence in a FASTA file"""
     sequences = file_text.split(">")[1:]
     sequences = [sequence.split("\n") for sequence in sequences]
     return [separate_header(sequence) for sequence in sequences]
 
 
-# returns a dataframe of sequences and headers from a FASTA file
-def make_dataframe_from_fasta(fasta):
+def make_dataframe_from_fasta(fasta: str) -> DataFrame:
+    """Returns a dataframe of sequences and headers from a FASTA file"""
     return DataFrame(process_fasta(fasta), columns=["header", "sequence"])
 
 
-def clean_dataframe_header(df, replacements):
-    df.columns = df.columns.str.strip().str.lower()
-    for key, value in replacements.items():
-        df.columns = df.columns.str.replace(key, value, regex=False)
-    return df
-
-
-def make_query(pdb_code):
+def make_query(pdb_code: str) -> str:
     return f"{pdb_code}[All Fields] AND pdb[filter]"
 
 

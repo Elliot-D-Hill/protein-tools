@@ -1,18 +1,11 @@
 import time
 
+from sklearn.model_selection import train_test_split
 from torch import int64, tensor, cat, no_grad, save
 from torch import nn
 from torch.nn.utils import clip_grad_norm_
 from torch.utils.data import DataLoader
 from torchtext.data.functional import to_map_style_dataset
-
-from utils import (
-    get_tokens,
-    make_dataset_iterator,
-    print_batch_info,
-    print_epoch_info,
-    split_dataset,
-)
 
 
 class SequenceClassifier(nn.Module):
@@ -89,14 +82,8 @@ class EmbeddingModel:
             collate_fn=self.collate_batch,
         )
 
-    # FIXME does not use self, turn into a function
-    def calculate_metric(self, predicted_label, label, total_acc, total_count):
-        total_acc += (predicted_label.argmax(1) == label).sum().item()
-        total_count += label.size(0)
-        return total_acc, total_count
-
     def train_epoch(self, dataloader, epoch, log_interval=10):
-        total_acc, total_count = 0, 0
+        total_accuracy, total_count = 0, 0
         n_batches = len(dataloader)
         for idx, (label, text, offsets) in enumerate(dataloader):
             self.optimizer.zero_grad()
@@ -105,44 +92,122 @@ class EmbeddingModel:
             loss.backward()
             clip_grad_norm_(self.model.parameters(), self.clip_grad)
             self.optimizer.step()
-            total_acc, total_count = self.calculate_metric(
-                predicted_label, label, total_acc, total_count
+            total_accuracy, total_count = calculate_metric(
+                predicted_label, label, total_accuracy, total_count
             )
             if idx % log_interval == 0 and idx > 0:
-                accuracy = total_acc / total_count
+                accuracy = total_accuracy / total_count
                 print_batch_info(epoch, idx, n_batches, accuracy)
-                total_acc, total_count = 0, 0
+                total_accuracy, total_count = 0, 0
 
     def evaluate(self, dataloader):
         self.model.eval()
-        total_acc, total_count = 0, 0
+        total_accuracy = 0
+        total_count = 0
         with no_grad():
             for label, text, offsets in dataloader:
                 predicted_label = self.model(text, offsets)
-                total_acc += (predicted_label.argmax(1) == label).sum().item()
-                total_count += label.size(0)
-        return total_acc / total_count
+                total_accuracy, total_count = calculate_metric(
+                    predicted_label, label, total_accuracy, total_count
+                )
+        return total_accuracy / total_count
 
-    def train_model(self, train_loader, validation_loader):
+    def train_model(self, train_loader, validation_loader=None):
         self.model.train()
-        total_accu = None
+        total_accuracy = None
         for epoch in range(1, self.n_epochs + 1):
             epoch_start_time = time.time()
             self.train_epoch(train_loader, epoch)
-            accu_val = self.evaluate(validation_loader)
-            if total_accu is not None and total_accu > accu_val:
-                self.scheduler.step()
-            else:
-                total_accu = accu_val
-            print_epoch_info(epoch, epoch_start_time, accu_val)
+            if validation_loader is not None:
+                accuracy_val = self.evaluate(validation_loader)
+                if total_accuracy is not None and total_accuracy > accuracy_val:
+                    self.scheduler.step()
+                else:
+                    total_accuracy = accuracy_val
+                print_epoch_info(epoch, epoch_start_time, accuracy_val)
 
-    def save_model(self, PATH):
-        save(self.model.state_dict(), PATH)
+    def save_model(self, filepath):
+        save(self.model.state_dict(), filepath)
 
-    def run_pipeline(self):
+    def calculate_test_accuracy(self):
         splits = split_dataset(self.X, self.y, self.train_proportion)
         dataloaders = [self.make_dataloader(X, y) for X, y in splits]
         train, test, validation = dataloaders
         self.train_model(train, validation)
         test_accuracy = self.evaluate(test)
         return test_accuracy
+
+    def fit(self):
+        train_loader = self.make_dataloader(self.X, self.y)
+        self.train_model(train_loader)
+
+    def predict(self, text):
+        with no_grad():
+            text = tensor(get_tokens(text))
+            output = self.model(text, tensor([0]))
+            return output.argmax(1).item() + 1
+
+
+def calculate_metric(predicted_label, label, total_accuracy, total_count):
+    total_accuracy += (predicted_label.argmax(1) == label).sum().item()
+    total_count += label.size(0)
+    return total_accuracy, total_count
+
+
+def build_vocabulary(text_list):
+    unique_tokens = set("".join(text_list))
+    return {value: key for key, value in enumerate(unique_tokens)}
+
+
+def print_batch_info(metrics):
+    text = ""
+    for (
+        name,
+        value,
+    ) in metrics.items():
+        text += f"{name}: {value}, "
+    return text
+
+
+def print_batch_info(epoch, idx, n_batches, metric):
+    text = f"| epoch {epoch} | {idx} / {n_batches} batches | metric: {metric:.5f} |"
+    print(text)
+
+
+def log_accuracy(
+    total_acc, total_count, predicted_label, label, idx, log_interval, epoch, n_batches
+):
+    total_acc += (predicted_label.argmax(1) == label).sum().item()
+    total_count += label.size(0)
+    if idx % log_interval == 0 and idx > 0:
+        print_batch_info(epoch, idx, n_batches, total_acc, total_count)
+        total_acc, total_count = 0, 0
+    return total_acc, total_count
+
+
+def print_epoch_info(epoch, start_time, metrics):
+    print("-" * 85)
+    time_i = time.time() - start_time
+    text = f"| end of epoch {epoch:3d} | time: {time_i:5.2f}s | validation metrics: {metrics} "
+    print(text)
+    print("-" * 85)
+
+
+# TODO check that X and y are in correct order
+def make_dataset_iterator(X, y):
+    return iter([(y_i, X_i) for y_i, X_i in zip(y, X)])
+
+
+def get_tokens(text, vocabulary):
+    return [vocabulary.get(key) for key in list(text)]
+
+
+def split_dataset(X, y, train_proportion):
+    test_valid_proportion = 1 - train_proportion
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_valid_proportion, random_state=2
+    )
+    X_test, X_val, y_test, y_val = train_test_split(
+        X_test, y_test, test_size=0.5, random_state=2
+    )
+    return [(X_train, y_train), (X_test, y_test), (X_val, y_val)]
