@@ -12,6 +12,7 @@ def separate_header(sequence: str) -> tuple[str]:
 
 def process_fasta(file_text: str) -> tuple[str]:
     """Returns a list of tuples containing a header and sequence for each sequence in a FASTA file"""
+    # TODO check if ">" is the first character of a new line
     sequences = file_text.split(">")[1:]
     sequences = [sequence.split("\n") for sequence in sequences]
     return [separate_header(sequence) for sequence in sequences]
@@ -111,7 +112,41 @@ def write_fasta_from_ncbi_query(filepath, pdb_codes, email, api_key):
         out_handle.write(data)
 
 
-def save_data(df, path, filename, postfix):
-    path.mkdir(parents=True, exist_ok=True)
-    prefix = filename.split(".")[0]
-    df.to_csv(f"{path}/{prefix}_{postfix}.csv", index=False)
+def collapse_on_column(df: DataFrame, column_name: str) -> DataFrame:
+    """Collapse rows that differ only by specified column"""
+    columns = [name for name in df.columns if name != column_name]
+    return (
+        df.groupby(columns)[column_name]
+        .apply(lambda lst: "".join(sorted(lst)))
+        .reset_index()
+    )
+
+
+class FastaParser:
+    def __init__(self):
+        self.column_names = [
+            "pdb_code",
+            "chain",
+            "description",
+            "sequence",
+        ]
+
+    def process_header(self, df):
+        header = df["header"].str.split("|")
+        df["pdb_code"] = header.str[1]
+        description = header.str[2]
+        df["chain"] = description.str[0]
+        df["description"] = description.str.split(", ").str[-1]
+        return df.drop("header", axis=1)
+
+    def organize_dataframe(self, df):
+        return df[self.column_names].sort_values(
+            ["pdb_code", "chain"], ignore_index=True
+        )
+
+    def run_pipeline(self, df):
+        return (
+            df.pipe(self.process_header)
+            .pipe(collapse_on_column, "chain")
+            .pipe(self.organize_dataframe)
+        )
