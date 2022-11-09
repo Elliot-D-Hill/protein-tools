@@ -142,6 +142,7 @@ class EmbeddingModel:
         self.train_model(train_loader)
 
     def predict(self, text):
+        self.model.eval()
         with no_grad():
             text = tensor(get_tokens(text))
             output = self.model(text, tensor([0]))
