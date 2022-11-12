@@ -9,10 +9,10 @@ from torchtext.data.functional import to_map_style_dataset
 
 
 class SequenceClassifier(nn.Module):
-    def __init__(self, vocab_size, embed_dim, num_class):
+    def __init__(self, vocabulary_size, embedding_size, n_classes):
         super(SequenceClassifier, self).__init__()
-        self.embedding = nn.EmbeddingBag(vocab_size, embed_dim, sparse=False)
-        self.fc = nn.Linear(embed_dim, num_class)
+        self.embedding = nn.EmbeddingBag(vocabulary_size, embedding_size, sparse=False)
+        self.fc = nn.Linear(embedding_size, n_classes)
         self.init_weights()
 
     def init_weights(self):
@@ -28,7 +28,17 @@ class SequenceClassifier(nn.Module):
 
 class EmbeddingModel:
     def __init__(
-        self, X, y, vocabulary, params, model, criterion, optimizer, scheduler, device
+        self,
+        X,
+        y,
+        vocabulary,
+        label_type,
+        training_parameters,
+        model,
+        criterion,
+        optimizer,
+        scheduler,
+        device,
     ):
         self.device = device
         # dataset
@@ -36,22 +46,18 @@ class EmbeddingModel:
         self.y = y
         self.label_map = {value: key for key, value in enumerate(set(y))}
         self.vocabulary = vocabulary
-        # model hyperparameters
-        self.embedding_size = params.embedding_size
+        self.label_type = label_type
         # training hyperparameters
-        self.batch_size = params.batch_size
-        self.learning_rate = params.learning_rate
-        self.n_epochs = params.n_epochs
-        self.train_proportion = params.train_proportion
-        self.clip_grad = params.clip_grad
-        self.gamma = params.lr_scheduler_gamma
+        self.batch_size = training_parameters.batch_size
+        self.n_epochs = training_parameters.n_epochs
+        self.train_proportion = training_parameters.train_proportion
+        self.clip_grad = training_parameters.clip_grad
         # model objects
         self.model = model
         self.criterion = criterion
         self.optimizer = optimizer
         self.scheduler = scheduler
         # helper variables
-        self.label_type = int64
 
     def get_label(self, _label):
         return self.label_map[_label]
