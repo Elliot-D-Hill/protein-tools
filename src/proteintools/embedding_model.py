@@ -29,8 +29,7 @@ class SequenceClassifier(nn.Module):
 class EmbeddingModel:
     def __init__(
         self,
-        X,
-        y,
+        label_map,
         vocabulary,
         label_type,
         training_parameters,
@@ -42,22 +41,18 @@ class EmbeddingModel:
     ):
         self.device = device
         # dataset
-        self.X = X
-        self.y = y
-        self.label_map = {value: key for key, value in enumerate(set(y))}
+        self.label_map = label_map
         self.vocabulary = vocabulary
         self.label_type = label_type
         # training hyperparameters
         self.batch_size = training_parameters.batch_size
         self.n_epochs = training_parameters.n_epochs
-        self.train_proportion = training_parameters.train_proportion
         self.clip_grad = training_parameters.clip_grad
         # model objects
         self.model = model
         self.criterion = criterion
         self.optimizer = optimizer
         self.scheduler = scheduler
-        # helper variables
 
     def get_label(self, _label):
         return self.label_map[_label]
@@ -69,7 +64,7 @@ class EmbeddingModel:
             processed_text = tensor(get_tokens(_text, self.vocabulary), dtype=int64)
             text_list.append(processed_text)
             offsets.append(processed_text.size(0))
-        label_list = tensor(label_list, dtype=self.label_type).float().unsqueeze(1)
+        label_list = tensor(label_list, dtype=self.label_type)  # .float().unsqueeze(1)
         offsets = tensor(offsets[:-1]).cumsum(dim=0)
         text_list = cat(text_list)
         return (
@@ -89,17 +84,18 @@ class EmbeddingModel:
         )
 
     def train_epoch(self, dataloader, epoch, log_interval=10):
-        total_accuracy, total_count = 0, 0
+        total_accuracy = 0
+        total_count = 0
         n_batches = len(dataloader)
-        for idx, (label, text, offsets) in enumerate(dataloader):
+        for idx, (labels, text, offsets) in enumerate(dataloader):
             self.optimizer.zero_grad()
             predicted_label = self.model(text, offsets)
-            loss = self.criterion(predicted_label, label)
+            loss = self.criterion(input=predicted_label, target=labels)
             loss.backward()
             clip_grad_norm_(self.model.parameters(), self.clip_grad)
             self.optimizer.step()
             total_accuracy, total_count = calculate_metric(
-                predicted_label, label, total_accuracy, total_count
+                predicted_label, labels, total_accuracy, total_count
             )
             if idx % log_interval == 0 and idx > 0:
                 accuracy = total_accuracy / total_count
@@ -132,27 +128,24 @@ class EmbeddingModel:
                     total_accuracy = accuracy_val
                 print_epoch_info(epoch, epoch_start_time, accuracy_val)
 
-    def save_model(self, filepath):
-        save(self.model.state_dict(), filepath)
-
-    def calculate_test_accuracy(self):
-        splits = split_dataset(self.X, self.y, self.train_proportion)
-        dataloaders = [self.make_dataloader(X, y) for X, y in splits]
-        train, test, validation = dataloaders
-        self.train_model(train, validation)
-        test_accuracy = self.evaluate(test)
+    def calculate_test_accuracy(self, X_train, y_train, X_test, y_test, X_val, y_val):
+        train_loader = self.make_dataloader(X_train, y_train)
+        validation_loader = self.make_dataloader(X_val, y_val)
+        test_loader = self.make_dataloader(X_test, y_test)
+        self.train_model(train_loader, validation_loader)
+        test_accuracy = self.evaluate(test_loader)
         return test_accuracy
 
-    def fit(self):
-        train_loader = self.make_dataloader(self.X, self.y)
+    def fit(self, X, y):
+        train_loader = self.make_dataloader(X, y)
         self.train_model(train_loader)
 
     def predict(self, text):
         self.model.eval()
         with no_grad():
-            text = tensor(get_tokens(text))
+            text = tensor(get_tokens(text, self.vocabulary))
             output = self.model(text, tensor([0]))
-            return output.argmax(1).item() + 1
+            return output.argmax(1).item()
 
 
 def calculate_metric(predicted_label, label, total_accuracy, total_count):
@@ -164,16 +157,6 @@ def calculate_metric(predicted_label, label, total_accuracy, total_count):
 def build_vocabulary(text_list):
     unique_tokens = set("".join(text_list))
     return {value: key for key, value in enumerate(unique_tokens)}
-
-
-def print_batch_info(metrics):
-    text = ""
-    for (
-        name,
-        value,
-    ) in metrics.items():
-        text += f"{name}: {value}, "
-    return text
 
 
 def print_batch_info(epoch, idx, n_batches, metric):
@@ -207,14 +190,3 @@ def make_dataset_iterator(X, y):
 
 def get_tokens(text, vocabulary):
     return [vocabulary.get(key) for key in list(text)]
-
-
-def split_dataset(X, y, train_proportion):
-    test_valid_proportion = 1 - train_proportion
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_valid_proportion, random_state=2
-    )
-    X_test, X_val, y_test, y_val = train_test_split(
-        X_test, y_test, test_size=0.5, random_state=2
-    )
-    return [(X_train, y_train), (X_test, y_test), (X_val, y_val)]
